@@ -1,2 +1,3 @@
 # REST-API-python
- A simple Python REST API using Flask
+
+This branch is for the React inventory project database
