@@ -102,17 +102,36 @@ def create_app():
     @app.route("/api/login", methods=['POST'])
     def login():
         data = request.json
-        user = tblUser.query.filter_by(username=data['username']).first()
+            
+        try:
+        
+            if 'username' not in data or 'password' not in data:
+                abort(400)
+                            
+            user = tblUser.query.filter_by(username=data['username']).first()
 
-        # invalid username/password check
-        if not user or not check_password_hash(user.password, data['password']):
-            abort(make_response({'data': { 'id' : 401, 'message' : 'bad username/password'}}, 401))
+            # invalid username/password check
+            if not user or not check_password_hash(user.password, data['password']):
+                abort(401)
 
-        # create API token and give back to client
-        token = jwt.encode({'id' : user.id, 'exp' : datetime.datetime.now() + datetime.timedelta(minutes=1440)}, app.config['SECRET_KEY'], "HS256")
-        response = jsonify( {'data' : { 'id' : 200, 'message' : 'logged in as ' + data['username'], 'token' : token }} )
-        return response
+            # create API token and give back to client
+            token = jwt.encode({'id' : user.id, 'exp' : datetime.datetime.now() + datetime.timedelta(minutes=1440)}, app.config['SECRET_KEY'], "HS256")
+            response = jsonify( {'data' : { 'id' : 200, 'message' : 'logged in as ' + data['username'], 'token' : token }} )
+            return response
 
+        except HTTPException as e:
+            print(e)
+            if e.code == 401:
+                abort(make_response({'data': { 'id' : 401, 'message' : 'invalid username/password'}}, 401))
+            abort(make_response({'data': { 'id' : 400, 'message' : f'client error, bad request data'}}, 400))
+        except exc.SQLAlchemyError as e:
+                print(e)
+                db.session.rollback()
+                abort(make_response({'data': { 'id' : 400, 'message' : 'client error, login failed'}}, 400))
+        except BaseException as e:
+                print(e)
+                db.session.rollback()
+                abort(make_response({'data': { 'id' : 500, 'message' : 'server error, login failed'}}, 500))
 
     # add a new user for API access
     @app.route("/api/adduser/", methods=['POST'])
