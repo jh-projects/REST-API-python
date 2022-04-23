@@ -116,7 +116,7 @@ def create_app():
 
             # create API token and give back to client
             token = jwt.encode({'id' : user.id, 'exp' : datetime.datetime.now() + datetime.timedelta(minutes=1440)}, app.config['SECRET_KEY'], "HS256")
-            response = jsonify( {'data' : { 'id' : 200, 'message' : 'logged in as ' + data['username'], 'token' : token }} )
+            response = jsonify( {'data' : { 'id' : 200, 'message' : 'Logged in as ' + data['username'], 'token' : token }} )
             return response
 
         except HTTPException as e:
