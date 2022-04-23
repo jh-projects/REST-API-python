@@ -200,7 +200,7 @@ def create_app():
         if r == None:
             abort(make_response({'data': { 'id' : 404, 'message' : f'{entity}{"/" + id if id != None else ""} record not found'}}, 404))
             
-        response = jsonify(r)
+        response = jsonify({'data': { 'id': 200, 'message': r }});
         return response
 
 
