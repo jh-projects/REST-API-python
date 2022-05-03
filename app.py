@@ -4,34 +4,42 @@ from werkzeug.security import check_password_hash
 from werkzeug.exceptions import HTTPException
 import jwt
 from functools import wraps
-from dboperations import populateDB
+from dboperations import createViewPortfolio, populateDB
 import dbmodel
-from dbmodel import tblUser, tblItem, tblCategory, tblManufacturer, tblModelNumber, tblBuilding, tblRoom, tblShelf, tblPartQuantity
+from dbmodel import *
 import datetime
 from sqlalchemy import exc
 from sqlalchemy.orm import exc as exc2
+import os
 
 # create a dictionary with all the DB tables for use with routing operations, minus the user table
-dbTablesMap = {t.lower().removeprefix("tbl") : eval(t) for t in dir(dbmodel) if t.startswith("tbl") and t != 'tblUser'}
+dbTablesMap = {t.lower().removeprefix("tbl") : eval(t) for t in dir(dbmodel) if t.startswith("tbl") and (t != 'tblUser' or t != 'tblPortfolio')}
 
 def create_app():
+
     app = Flask("app")
     app.secret_key = "keepmeasecret"
-    
+
+    # ******** FOR DEBUGGING
+    # for clearing DB on restarts - deletes DB file before rebuilding
+    # so that unique keys don't cause errors
+    if os.path.exists('cryptofolio.db'):
+        os.remove('cryptofolio.db')
+
+
     # database configuration
-    #app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///inventory2.db'
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///cryptofolio.db'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+    #app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['SQLALCHEMY_ECHO'] = False
 
 
-    from dbmodel import db
     # required to make SQLAlchemy and Flask work together
     with app.app_context():
+        
         CORS(app)   # process CORS mode requests silently
         db.init_app(app)
         populateDB(db)
-        
         
     # validates JWT token for authenticating REST API
     def validate_token(f):
@@ -46,8 +54,8 @@ def create_app():
                 response.headers.add('Access-Control-Allow-Methods', "*")
                 return response
            
-            # TESTING ONLY **************** * bypasses token validation and grants admin access to anyone
-            #return f(1, *args, **kwargs)
+            #TESTING ONLY **************** * bypasses token validation and grants admin access to anyone
+            return f(1, *args, **kwargs)
             
             if 'x-access-tokens' in request.headers:
                 token = request.headers['x-access-tokens']
@@ -101,6 +109,7 @@ def create_app():
     # login method
     @app.route("/api/login", methods=['POST'])
     def login():
+       
         data = request.json
         user = tblUser.query.filter_by(username=data['username']).first()
 
@@ -156,6 +165,12 @@ def create_app():
         try:
             entity = entity.lower()
             
+            # code to create and return portfolio view
+            # viewPortfolio = createViewPortfolio(current_user, db, app.config['SQLALCHEMY_DATABASE_URI'])
+            # x = db.session.query(viewPortfolio)
+            # for r in x:
+            #     print(r)
+
             # for searching items records, search single items by serial number
             if entity == "item":
                 if id != None:
@@ -190,18 +205,22 @@ def create_app():
     @validate_token
     def add_record(current_user, entity):
         data = request.json
-
+        print(data)
         try:
         
             entity = entity.lower()
+                
+            if entity == 'tx':
+                portfolioRecord = tblPortfolio.query.filter_by(coinId=data['buyCoinId']).first()
+                if portfolioRecord == None:
+                    portfolioRecord =  tblPortfolio()
+                    portfolioRecord.userId = current_user
+                    portfolioRecord.coinId = data['buyCoinId']                    
+                    portfolioRecord.unitsHeld = data['buyUnits']
+                else:
+                    print(portfolioRecord)
+
             if entity in dbTablesMap:
-
-                # special check to make sure not trying to use an existing serial number that exists in tblItems
-                if 'serialNumber' in data:
-                    
-                    if tblItem.query.filter_by(serialNumber=data['serialNumber'].upper()).first() != None:
-                        abort(409)
-
 
                 newRecord = dbTablesMap[entity]()
                 # get the fields available for modification in the record using the dataclass attributes
@@ -212,7 +231,7 @@ def create_app():
                     if field in recordFields:
                         setattr(newRecord, field, data[field])
                 newRecord.userId = current_user # this field is not included in request data, since it is derived from token
-                newRecord.isPart = False    #no parts for now
+
             else: 
                 abort(400)
             
@@ -222,8 +241,6 @@ def create_app():
 
         except HTTPException as e:
             db.session.rollback()
-            if e.code == 409:
-                abort(make_response({'data': { 'id' : 409, 'message' : f'item with serial number {data["serialNumber"]} already exists'}}, 409))
             abort(make_response({'data': { 'id' : 400, 'message' : f'client error, {entity} does not exist'}}, 400))
         except exc.SQLAlchemyError as e:
             print(e)

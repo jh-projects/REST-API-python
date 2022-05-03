@@ -1,7 +1,11 @@
 from flask_sqlalchemy import SQLAlchemy
 import datetime
-from sqlalchemy.orm import validates
+from sqlalchemy.orm import validates, column_property
 from dataclasses import dataclass
+import decimal
+from sqlalchemy import and_
+from sqlalchemy.sql import func
+import sqlalchemy as sa
 from werkzeug.security import generate_password_hash
 db = SQLAlchemy()
 
@@ -10,9 +14,9 @@ db = SQLAlchemy()
 class tblUser(db.Model):
     __tablename__ = 'user'
     
-    #id : int
+    id : int
     username : str
-    #email : str
+    email : str
     #password : str
     #isAdmin: bool
     
@@ -36,218 +40,171 @@ class tblUser(db.Model):
         return value.lower()
         
 @dataclass
-class tblItem(db.Model):
-    __tablename__ = 'item'
+class tblTx(db.Model):
+    __tablename__ = 'transactions'
     
     id : int
-    poNumber : int
-    serialNumber : str
-    isPart : bool
-    rcvdDate : datetime.datetime
     userId: int
-    user : None
-    categoryId : int
-    category : None
-    modelNumberId : int
-    modelNumber : None
-    manufacturerId : int
-    manufacturer : None
-    buildingId : int
-    building : None
-    roomId : int
-    room : None
-    shelfId : int
-    shelf : None
-
+    txDate : datetime.datetime
+    buyCoinPrice : decimal.Decimal
+    sellCoinPrice : decimal.Decimal
+    buyUnits: decimal.Decimal
+    totalPrice: decimal.Decimal
+    sellUnits: decimal.Decimal
+    buyCoinId: int
+    sellCoinId: int
+    fxRate: decimal.Decimal
+    txFees: decimal.Decimal
+    txNotes: str
+    exchangeId: int
+    isTxSell: bool
+    user: None
+    buyCoin: None
+    sellCoin: None
+    fx: None
+    exchange: None
+    
     id = db.Column(db.Integer, primary_key=True)
-    poNumber = db.Column(db.String(255), nullable=False)
-    serialNumber = db.Column(db.String(255), unique=True, nullable=False)
-    isPart = db.Column(db.Boolean, nullable=False)
-    rcvdDate = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+    userId = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False )
+    user = db.relationship("tblUser", backref=db.backref("users"))
+    txDate = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+    buyCoinPrice = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    sellCoinPrice = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), default=1.0)
+    buyUnits = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    sellUnits = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False, default=0)
+    totalPrice = column_property(buyCoinPrice * buyUnits / sellCoinPrice)
+    #totalPrice = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=True)
+    buyCoinId = db.Column(db.Integer, db.ForeignKey('coins.id'), nullable=False )
+    buyCoin = db.relationship("tblCoinsLkUp", backref=db.backref("buyCoins"), foreign_keys=[buyCoinId])
+    sellCoinId = db.Column(db.Integer, db.ForeignKey('coins.id'), nullable=False, default=1 )
+    sellCoin = db.relationship("tblCoinsLkUp", backref=db.backref("sellCoins"), foreign_keys=[sellCoinId])
+    fxId = db.Column(db.Integer, db.ForeignKey('fx.id'), nullable=True )
+    fx = db.relationship("tblFxLkUp", backref=db.backref("fx"))
+    fxRate = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    txFees = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    txNotes = db.Column(db.String(512), nullable=True)
+    exchangeId = db.Column(db.Integer, db.ForeignKey('exchanges.id'), nullable=True )
+    exchange = db.relationship("tblExchangeLkUp", backref=db.backref("exchanges"))
+    isTxSell = db.Column(db.Boolean, nullable=False, default=False)
+    
+    @validates('id', 'user', 'buyCoin', 'sellCoin', 'fx', 'exchange')
+    def _no_access(self, key, value):
+        raise ValueError(f'Field {key} is not user-writable')
+
+    # @validates('sellCoinPrice')
+    # def _setDefault(self,key,value):
+    #     return 1
+
+@dataclass
+class tblPortfolio(db.Model):
+    __tablename__ = 'portfolio'
+    
+    id: int
+    userId: int
+    coinId: int
+    # firstTxDate : datetime.datetime
+    # lastTxDate : datetime.datetime
+    unitsHeld: decimal.Decimal
+    numBuyTx: int
+    numSellTx: int
+    user: None
+    coin: None
+    
+    id = db.Column(db.Integer, primary_key=True)
     userId = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False )
     user = db.relationship("tblUser", backref=db.backref("user"))
-    categoryId = db.Column(db.Integer, db.ForeignKey('category.id'), nullable=False)
-    category = db.relationship("tblCategory", backref=db.backref("itemcategory"))
-    modelNumberId = db.Column(db.Integer, db.ForeignKey('modelnumber.id'), nullable=False)
-    modelNumber = db.relationship("tblModelNumber", backref=db.backref("itemmodel"))
-    manufacturerId = db.Column(db.Integer, db.ForeignKey('manufacturer.id'), nullable=False)
-    manufacturer = db.relationship("tblManufacturer", backref=db.backref("itemmanufacturer"))
-    buildingId = db.Column(db.Integer, db.ForeignKey('building.id'), nullable=False)
-    building = db.relationship("tblBuilding", backref=db.backref("itembuilding"))
-    roomId = db.Column(db.Integer, db.ForeignKey('room.id'), nullable=False)  
-    room = db.relationship("tblRoom", backref=db.backref("itemroom"))
-    shelfId = db.Column(db.Integer, db.ForeignKey('shelf.id'), nullable=False)
-    shelf = db.relationship("tblShelf", backref=db.backref("itemshelf"))
-    
-    @validates('id', 'rcvdDate', 'user', 'category', 'modelNumber', 'manufacturer', 'building', 'room', 'shelf')
+    coinId = db.Column(db.Integer, db.ForeignKey('coins.id'), nullable=False )
+    coin = db.relationship("tblCoinsLkUp", backref=db.backref("coins"))
+    #firstTxDate = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+    #lastTxDate = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+    unitsHeld = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    numBuyTx = db.Column(db.Integer, nullable=False, default=1)
+    numSellTx = db.Column(db.Integer, nullable=False, default=0)
+
+    @validates('id', 'user', 'coin')
     def _no_access(self, key, value):
         raise ValueError(f'Field {key} is not user-writable')
 
-    @validates('serialNumber','poNumber')
-    def _uppercase(self, key, value):
-        # put a prefix on PO numbers
-        if key == 'poNumber' and value[:3].upper() != 'PO-':
-            value = f'PO-{value}'
+    @validates('numBuyTx')
+    def _incrementBuyTx(self, key, value):
+        if self.numBuyTx > 0:
+            return self.numBuyTx + 1
+        return 1
 
-        return value.upper()
-
-
-
-class tblPartQuantity(db.Model):
-    __tablename__ = 'partquantity'
-    id = db.Column(db.Integer, primary_key=True)
-    itemId = db.Column(db.Integer, db.ForeignKey('item.id'), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
-    
 
 @dataclass
-class tblCategory(db.Model):
-    __tablename__ = 'category'
-    
-    id : int
-    name : str
-    description : str
-    isActive : bool
-    
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False)
-    description = db.Column(db.String(255), nullable=False)
-    isActive = db.Column(db.Boolean, nullable=False, default=True)
-
-    @validates('id')
-    def _no_access(self, key, value):
-        raise ValueError(f'Field {key} is not user-writable')
-        
-    @validates('name')
-    def _uppercase(self, key, value):
-        return value.upper()
-
-@dataclass
-class tblModelNumber(db.Model):
-    __tablename__ = 'modelnumber'
+class tblCoinsLkUp(db.Model):
+    __tablename__ = 'coins'
     
     id: int
     name: str
-    description: str
-    isActive : bool
-    #categoryId : int
-    #category: None
-    manufacturerId : int
-    manufacturer: None
+    ticker: str
+    isToken : bool
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
-    isActive = db.Column(db.Boolean, nullable=False, default=True)
-    description = db.Column(db.String(255), nullable=False)
-    #categoryId = db.Column(db.Integer, db.ForeignKey('category.id'), nullable=False)
-    #category = db.relationship("tblCategory", backref=db.backref("modelcategory"))
-    manufacturerId = db.Column(db.Integer, db.ForeignKey('manufacturer.id'), nullable=False)
-    manufacturer = db.relationship("tblManufacturer", backref=db.backref("modelmanufacturer"))
-    
-    @validates('id', 'manufacturer') #'category',
-    def _no_access(self, key, value):
-        raise ValueError(f'Field {key} is not user-writable')
+    ticker = db.Column(db.String(10), nullable=False)
+    isToken = db.Column(db.Boolean, nullable=False, default=False)
 
-    @validates('name')
-    def _uppercase(self, key, value):
-        return value.upper()
-
-@dataclass
-class tblManufacturer(db.Model):
-    __tablename__ = 'manufacturer'
-    
-    id : int
-    name: str
-    isActive : bool
-    
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False)
-    isActive = db.Column(db.Boolean, nullable=False, default=True)
-    
     @validates('id')
     def _no_access(self, key, value):
         raise ValueError(f'Field {key} is not user-writable')
-    
+
     @validates('name')
+    def _capitalize(self, key, value):
+        return value.capitalize()
+
+    @validates('ticker')
     def _uppercase(self, key, value):
         return value.upper()
 
 
 @dataclass
-class tblBuilding(db.Model):
-    __tablename__ = 'building'
+class tblExchangeLkUp(db.Model):
+    __tablename__ = 'exchanges'
     
     id: int
     name: str
-    street: str
-    city: str
-    region: str
-    country: str
-    isActive : bool
+    url: str
     
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), unique=True, nullable=False)
-    street = db.Column(db.String(255), nullable=False)
-    city = db.Column(db.String(255), nullable=False)
-    region = db.Column(db.String(255), nullable=False)
-    country = db.Column(db.String(255), nullable=False)
-    isActive = db.Column(db.Boolean, nullable=False, default=True)
+    name = db.Column(db.String(255), nullable=False)
+    url = db.Column(db.String(255), nullable=True)
     
     @validates('id')
     def _no_access(self, key, value):
         raise ValueError(f'Field {key} is not user-writable')
 
     @validates('name')
+    def _capitalize(self, key, value):
+        return value.capitalize()
+
+    @validates('url')
     def _uppercase(self, key, value):
-        return value.upper()
+        return value.lower()
 
 
 @dataclass
-class tblRoom(db.Model):
-    __tablename__ = 'room'
+class tblFxLkUp(db.Model):
+    __tablename__ = 'fx'
     
-    id : int
-    name : str
-    buildingId : int
-    building : None
-    isActive : bool
-    
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False)
-    buildingId = db.Column(db.Integer, db.ForeignKey('building.id'), nullable=False)
-    building = db.relationship("tblBuilding", backref=db.backref("roombuilding"))
-    isActive = db.Column(db.Boolean, nullable=False, default=True)
-    
-    @validates('id', 'building')
-    def _no_access(self, key, value):
-        raise ValueError(f'Field {key} is not user-writable')
-
-    @validates('name')
-    def _uppercase(self, key, value):
-        return value.upper()
-
-
-@dataclass
-class tblShelf(db.Model):
-    __tablename__ = 'shelf'
-    
-    id : int
-    name : str
-    roomId : int
-    room : None
-    isActive : bool
+    id: int
+    name: str
+    ticker: str
+    latestRate: decimal.Decimal
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
-    roomId = db.Column(db.Integer, db.ForeignKey('room.id'), nullable=False)
-    room = db.relationship("tblRoom", backref=db.backref("shelfroom"))
-    isActive = db.Column(db.Boolean, nullable=False, default=True)
+    ticker = db.Column(db.String(10), nullable=False)
+    latestRate = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=6), nullable=False)
+
     
-    @validates('id', 'room')
+    @validates('id')
     def _no_access(self, key, value):
         raise ValueError(f'Field {key} is not user-writable')
 
-    @validates('name')
+
+    @validates('url')
     def _uppercase(self, key, value):
-        return value.upper()
+        return value.lower()
 

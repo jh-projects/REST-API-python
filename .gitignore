@@ -3,3 +3,4 @@ __pycache__/app.cpython-310.pyc
 __pycache__/dbmodel.cpython-310.pyc
 __pycache__/dboperations.cpython-310.pyc
 package-lock.json
+.vscode/launch.json
