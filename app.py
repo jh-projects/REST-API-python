@@ -4,13 +4,14 @@ from werkzeug.security import check_password_hash
 from werkzeug.exceptions import HTTPException
 import jwt
 from functools import wraps
-from dboperations import createViewPortfolio, populateDB
-import dbmodel
-from dbmodel import *
 import datetime
 from sqlalchemy import exc
 from sqlalchemy.orm import exc as exc2
 import os
+import threading
+from dboperations import createViewPortfolio, populateDB, updatePortfolio, updateFxRates
+import dbmodel
+from dbmodel import *
 
 # create a dictionary with all the DB tables for use with routing operations, minus the user table
 dbTablesMap = {t.lower().removeprefix("tbl") : eval(t) for t in dir(dbmodel) if t.startswith("tbl") and (t != 'tblUser' or t != 'tblPortfolio')}
@@ -19,6 +20,7 @@ def create_app():
 
     app = Flask("app")
     app.secret_key = "keepmeasecret"
+    app.config['DEBUG'] = True
 
     # ******** FOR DEBUGGING
     # for clearing DB on restarts - deletes DB file before rebuilding
@@ -33,13 +35,14 @@ def create_app():
     #app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
     app.config['SQLALCHEMY_ECHO'] = False
 
-
     # required to make SQLAlchemy and Flask work together
     with app.app_context():
-        
+
         CORS(app)   # process CORS mode requests silently
         db.init_app(app)
         populateDB(db)
+        fxUpdateThread = threading.Thread(target=updateFxRates, args=(app, db), daemon=True)
+        fxUpdateThread.start()
         
     # validates JWT token for authenticating REST API
     def validate_token(f):
@@ -172,14 +175,11 @@ def create_app():
             #     print(r)
 
             # for searching items records, search single items by serial number
-            if entity == "item":
-                if id != None:
-                    r = tblItem.query.filter_by(serialNumber=id.upper()).first()
-                else:
-                    r = tblItem.query.all()
+            if entity == "tx":
+                    r = tblTx.query.filter_by(userId=current_user).all()
 
             # for searching lookup table records
-            elif entity in dbTablesMap and entity != "item":
+            elif entity in dbTablesMap and entity != "tx":
                 if id !=None: # use table ID when searching single records
                     r = dbTablesMap[entity].query.filter_by(id=id, isActive=True).first()
                 else:
@@ -205,21 +205,10 @@ def create_app():
     @validate_token
     def add_record(current_user, entity):
         data = request.json
-        print(data)
         try:
         
             entity = entity.lower()
-                
-            if entity == 'tx':
-                portfolioRecord = tblPortfolio.query.filter_by(coinId=data['buyCoinId']).first()
-                if portfolioRecord == None:
-                    portfolioRecord =  tblPortfolio()
-                    portfolioRecord.userId = current_user
-                    portfolioRecord.coinId = data['buyCoinId']                    
-                    portfolioRecord.unitsHeld = data['buyUnits']
-                else:
-                    print(portfolioRecord)
-
+     
             if entity in dbTablesMap:
 
                 newRecord = dbTablesMap[entity]()
@@ -234,8 +223,19 @@ def create_app():
 
             else: 
                 abort(400)
+
+            # for transaction operations - update the portfolio record
+            if entity == 'tx':
+                portfolioRecord = updatePortfolio(current_user, data)
+                if portfolioRecord == False:
+                    abort(400)
+
+                db.session.add(portfolioRecord)
+
+
             
             db.session.add(newRecord)
+
             db.session.commit()
             return jsonify({'data': { 'id' : 201, 'message' : newRecord}}), 201
 
@@ -261,13 +261,8 @@ def create_app():
             entity = entity.lower()
             editRecord = None
             
-            # if entity is item, get record to updated by serial number
-            if entity == "item":
-                editRecord = dbTablesMap[entity].query.filter_by(serialNumber=id.upper()).first()
-
-
             # otherwise use id
-            elif entity in dbTablesMap:
+            if entity in dbTablesMap:
                 editRecord = dbTablesMap[entity].query.filter_by(id=id).first()
 
             if editRecord == None:
@@ -327,7 +322,7 @@ def create_app():
             db.session.rollback()
             abort(make_response({'data': { 'id' : 500, 'message' : f'server error, {entity}/{id} not removed'}}, 500))
                 
-    app.run(debug=True)    
+    app.run(use_reloader=False)    
 
 create_app()
 

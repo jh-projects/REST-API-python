@@ -3,7 +3,7 @@ import datetime
 from sqlalchemy.orm import validates, column_property
 from dataclasses import dataclass
 import decimal
-from sqlalchemy import and_
+from sqlalchemy import and_, column
 from sqlalchemy.sql import func
 import sqlalchemy as sa
 from werkzeug.security import generate_password_hash
@@ -45,11 +45,10 @@ class tblTx(db.Model):
     
     id : int
     userId: int
-    txDate : datetime.datetime
+    txDateTime : datetime.datetime
     buyCoinPrice : decimal.Decimal
     sellCoinPrice : decimal.Decimal
     buyUnits: decimal.Decimal
-    totalPrice: decimal.Decimal
     sellUnits: decimal.Decimal
     buyCoinId: int
     sellCoinId: int
@@ -57,7 +56,8 @@ class tblTx(db.Model):
     txFees: decimal.Decimal
     txNotes: str
     exchangeId: int
-    isTxSell: bool
+    totalPriceUSD: decimal.Decimal
+    totalPriceFx: decimal.Decimal
     user: None
     buyCoin: None
     sellCoin: None
@@ -67,33 +67,40 @@ class tblTx(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     userId = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False )
     user = db.relationship("tblUser", backref=db.backref("users"))
-    txDate = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+    txDateTime = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
     buyCoinPrice = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
-    sellCoinPrice = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), default=1.0)
+    sellCoinPrice = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False, default=1.0)
     buyUnits = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
-    sellUnits = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False, default=0)
-    totalPrice = column_property(buyCoinPrice * buyUnits / sellCoinPrice)
-    #totalPrice = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=True)
+    sellUnits = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    fxRate = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False, default=1.0)
+    totalPriceUSD = column_property( buyCoinPrice * buyUnits)
+    totalPriceFx = column_property( buyCoinPrice * buyUnits * fxRate)
     buyCoinId = db.Column(db.Integer, db.ForeignKey('coins.id'), nullable=False )
-    buyCoin = db.relationship("tblCoinsLkUp", backref=db.backref("buyCoins"), foreign_keys=[buyCoinId])
-    sellCoinId = db.Column(db.Integer, db.ForeignKey('coins.id'), nullable=False, default=1 )
-    sellCoin = db.relationship("tblCoinsLkUp", backref=db.backref("sellCoins"), foreign_keys=[sellCoinId])
-    fxId = db.Column(db.Integer, db.ForeignKey('fx.id'), nullable=True )
-    fx = db.relationship("tblFxLkUp", backref=db.backref("fx"))
-    fxRate = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    buyCoin = db.relationship("tblCoins", backref=db.backref("buyCoins"), foreign_keys=[buyCoinId])
+    sellCoinId = db.Column(db.Integer, db.ForeignKey('coins.id'), nullable=False, default=1)
+    sellCoin = db.relationship("tblCoins", backref=db.backref("sellCoins"), foreign_keys=[sellCoinId])
+    fxId = db.Column(db.Integer, db.ForeignKey('fx.id'), nullable=False, default=1)
+    fx = db.relationship("tblFx", backref=db.backref("fx"))
     txFees = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
     txNotes = db.Column(db.String(512), nullable=True)
     exchangeId = db.Column(db.Integer, db.ForeignKey('exchanges.id'), nullable=True )
-    exchange = db.relationship("tblExchangeLkUp", backref=db.backref("exchanges"))
-    isTxSell = db.Column(db.Boolean, nullable=False, default=False)
+    exchange = db.relationship("tblExchanges", backref=db.backref("exchanges"))
+
     
     @validates('id', 'user', 'buyCoin', 'sellCoin', 'fx', 'exchange')
     def _no_access(self, key, value):
         raise ValueError(f'Field {key} is not user-writable')
 
-    # @validates('sellCoinPrice')
-    # def _setDefault(self,key,value):
-    #     return 1
+    @validates('sellUnits', 'buyUnits', 'sellCoinPrice', 'fxRate', 'buyCoinPrice', 'txFees')
+    def _set_decimals(self, key, value):
+        value = decimal.Decimal(value)
+        return value
+
+    @validates('txDateTime')
+    def _set_tx_datetime(self,key,value):
+        print(f' here {value}')
+        return datetime.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')       
+
 
 @dataclass
 class tblPortfolio(db.Model):
@@ -107,52 +114,57 @@ class tblPortfolio(db.Model):
     unitsHeld: decimal.Decimal
     numBuyTx: int
     numSellTx: int
+    _isActive: None
+    totalInvestmentUSD: decimal.Decimal
+    totalInvestmentFx: decimal.Decimal
     user: None
     coin: None
+
     
     id = db.Column(db.Integer, primary_key=True)
     userId = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False )
     user = db.relationship("tblUser", backref=db.backref("user"))
     coinId = db.Column(db.Integer, db.ForeignKey('coins.id'), nullable=False )
-    coin = db.relationship("tblCoinsLkUp", backref=db.backref("coins"))
+    coin = db.relationship("tblCoins", backref=db.backref("coins"))
     #firstTxDate = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
     #lastTxDate = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
     unitsHeld = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    totalInvestmentUSD = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    totalInvestmentFx = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
+    #totalInvestmentFx = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=8), nullable=False)
     numBuyTx = db.Column(db.Integer, nullable=False, default=1)
     numSellTx = db.Column(db.Integer, nullable=False, default=0)
+    _isActive = db.Column(db.Boolean, nullable=False, default=True)
 
     @validates('id', 'user', 'coin')
     def _no_access(self, key, value):
         raise ValueError(f'Field {key} is not user-writable')
 
-    @validates('numBuyTx')
-    def _incrementBuyTx(self, key, value):
-        if self.numBuyTx > 0:
-            return self.numBuyTx + 1
-        return 1
+    @validates('unitsHeld','totalInvestmentUSD')
+    def _no_negative_values(self,key,value):
+        if value < 0:
+            raise ValueError(f'Field {key} cannot be < 0')
+        return value
 
 
 @dataclass
-class tblCoinsLkUp(db.Model):
+class tblCoins(db.Model):
     __tablename__ = 'coins'
     
     id: int
     name: str
     ticker: str
-    isToken : bool
+    #isToken : bool
     
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False)
-    ticker = db.Column(db.String(10), nullable=False)
-    isToken = db.Column(db.Boolean, nullable=False, default=False)
+    name = db.Column(db.String(255), nullable=False, unique=True)
+    ticker = db.Column(db.String(10), nullable=False, unique=True)
+    #isToken = db.Column(db.Boolean, nullable=False, default=False)
 
     @validates('id')
     def _no_access(self, key, value):
         raise ValueError(f'Field {key} is not user-writable')
 
-    @validates('name')
-    def _capitalize(self, key, value):
-        return value.capitalize()
 
     @validates('ticker')
     def _uppercase(self, key, value):
@@ -160,7 +172,7 @@ class tblCoinsLkUp(db.Model):
 
 
 @dataclass
-class tblExchangeLkUp(db.Model):
+class tblExchanges(db.Model):
     __tablename__ = 'exchanges'
     
     id: int
@@ -168,7 +180,7 @@ class tblExchangeLkUp(db.Model):
     url: str
     
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False)
+    name = db.Column(db.String(255), nullable=False, unique=True)
     url = db.Column(db.String(255), nullable=True)
     
     @validates('id')
@@ -185,23 +197,24 @@ class tblExchangeLkUp(db.Model):
 
 
 @dataclass
-class tblFxLkUp(db.Model):
+class tblFx(db.Model):
     __tablename__ = 'fx'
     
     id: int
     name: str
     ticker: str
     latestRate: decimal.Decimal
+    isActive: bool
     
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False)
-    ticker = db.Column(db.String(10), nullable=False)
+    name = db.Column(db.String(255), nullable=False, unique=True)
+    ticker = db.Column(db.String(10), nullable=False, unique=True)
     latestRate = db.Column(db.Float(precision=18, asdecimal=True, decimal_return_scale=6), nullable=False)
-
+    isActive = db.Column(db.Boolean, nullable=False, default=True)
     
-    @validates('id')
-    def _no_access(self, key, value):
-        raise ValueError(f'Field {key} is not user-writable')
+    # @validates('id')
+    # def _no_access(self, key, value):
+    #     raise ValueError(f'Field {key} is not user-writable')
 
 
     @validates('url')
